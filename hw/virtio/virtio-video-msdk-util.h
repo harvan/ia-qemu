@@ -55,7 +55,7 @@ void virtio_video_msdk_uninit_frame(VirtIOVideoFrame *frame);
 int virtio_video_msdk_input_surface(MsdkSurface *surface, VirtIOVideoResource *resource);
 int virtio_video_msdk_output_surface(MsdkSession *session, MsdkSurface *surface, VirtIOVideoResource *resource);
 void virtio_video_msdk_stream_reset_param(VirtIOVideoStream *stream,
-    mfxVideoParam *param, bool encode);
+    mfxVideoParam *param, bool bInput);
 
 void virtio_video_msdk_load_plugin(mfxSession session, uint32_t format,
     bool encode);

@@ -83,7 +83,8 @@ static mfxStatus virtio_video_decode_parse_header(VirtIOVideoWork *work)
 
     virtio_video_msdk_bitstream_append(bitstream, input);
     status = MFXVideoDECODE_DecodeHeader(m_session->session, bitstream, &param);
-
+    DPRINTF("MFXVideoDECODE_DecodeHeader return %s\n",
+                virtio_video_status_to_string(status));
     switch (status) {
     case MFX_ERR_NONE:
         break;
@@ -194,6 +195,7 @@ static mfxStatus virtio_video_decode_one_frame(VirtIOVideoWork *work,
             break;
         }
     }
+
     if (work_surface == NULL) {
         DPRINTF("virtio-video: stream %d no available surface "
                      "in surface pool", stream->id);
@@ -203,7 +205,6 @@ static mfxStatus virtio_video_decode_one_frame(VirtIOVideoWork *work,
         return MFX_ERR_NOT_ENOUGH_BUFFER;
     }
  
-
     if (stream->out.params.format != VIRTIO_VIDEO_FORMAT_NV12) {
         QLIST_FOREACH(vpp_work_surface, &m_session->vpp_surface_pool, next) {
             if (!vpp_work_surface->used &&
@@ -220,7 +221,7 @@ static mfxStatus virtio_video_decode_one_frame(VirtIOVideoWork *work,
     }
 
     do {
-        DPRINTF("bs:%p, input surface:%p \n", bitstream, work_surface);
+        DPRINTF("bs:%p, input surface:%p\n", bitstream, work_surface);
         status = MFXVideoDECODE_DecodeFrameAsync(m_session->session, bitstream,
                                                  &work_surface->surface,
                                                  &out_surface, &m_frame->sync);
@@ -312,7 +313,8 @@ static mfxStatus virtio_video_decode_one_frame(VirtIOVideoWork *work,
     } while (status == MFX_WRN_DEVICE_BUSY);
 
     work_surface->used = false;
-    DPRINTF("dyang23 work_surface->used:%d, surface.Data.Locked:%d", work_surface->used, work_surface->surface.Data.Locked);
+    DPRINTF("work_surface->used:%d, surface.Data.Locked:%d\n", 
+        work_surface->used, work_surface->surface.Data.Locked);
     vpp_work_surface->used = true;
     m_frame->vpp_surface = vpp_work_surface;
     return MFX_ERR_NONE;
@@ -388,16 +390,21 @@ static mfxStatus virtio_video_decode_submit_one_work(VirtIOVideoWork *work,
     while (true) {
         m_frame = g_new0(MsdkFrame, 1);
         status = virtio_video_decode_one_frame(work, m_frame, eos);
-
         if (status == MFX_ERR_NOT_ENOUGH_BUFFER || (status != MFX_ERR_NONE && status != MFX_ERR_MORE_SURFACE && !eos)) {
             if (m_frame->surface) {
                 error_report("%s status:%d with valid surface:%p\n", __func__,
                              status, m_frame->surface);
             } else {
                 g_free(m_frame);
-                break;
+
+                if (status == MFX_WRN_VIDEO_PARAM_CHANGED) {
+                    DPRINTF("a new sequence header in bitstream, decode it again\n");
+                    continue;
+                } else
+                    break;
             }
         }
+        
         // MFX_ERR_MORE_SURFACE, incase there is valid output surface need
         // handle.
         DPRINTF("m_frame->surface:%p\n", m_frame->surface);
@@ -411,6 +418,7 @@ static mfxStatus virtio_video_decode_submit_one_work(VirtIOVideoWork *work,
                 break;
             }
         }
+
         if (frame == NULL) {
             if (inserted) {
                 warn_report("virtio-video: stream %d generated too many "
@@ -1117,11 +1125,6 @@ size_t virtio_video_msdk_dec_stream_create(VirtIOVideo *v,
      *                              for device output.
      */
     stream->out.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-#ifdef OUTPUT_RGBA
-    stream->out.params.format = VIRTIO_VIDEO_FORMAT_ARGB8888;
-#else
-     stream->out.params.format = VIRTIO_VIDEO_FORMAT_NV12;
-#endif
     stream->out.params.min_buffers = 1;
     stream->out.params.max_buffers = 32;
     stream->out.params.frame_rate = fmt->frames.lh_first->frame_rates[0].max;
@@ -1131,14 +1134,28 @@ size_t virtio_video_msdk_dec_stream_create(VirtIOVideo *v,
     stream->out.params.crop.top = 0;
     stream->out.params.crop.width = stream->out.params.frame_width;
     stream->out.params.crop.height = stream->out.params.frame_height;
+
+#ifdef OUTPUT_RGBA
+    stream->out.params.format = VIRTIO_VIDEO_FORMAT_ARGB8888;
     stream->out.params.num_planes = 1;
     stream->out.params.plane_formats[0].plane_size =
         stream->out.params.frame_width * stream->out.params.frame_height * 4;
+    stream->out.params.plane_formats[0].stride =
+        stream->out.params.frame_width * 4;
+#else
+    stream->out.params.format = VIRTIO_VIDEO_FORMAT_NV12;
+    stream->out.params.num_planes = 2;
+    stream->out.params.plane_formats[0].plane_size =
+        stream->out.params.frame_width * stream->out.params.frame_height;
+    stream->out.params.plane_formats[0].stride = stream->out.params.frame_width;
+    stream->out.params.plane_formats[1].plane_size =
+        stream->out.params.frame_width * stream->out.params.frame_height / 2;
+    stream->out.params.plane_formats[1].stride = stream->out.params.frame_width;
+#endif
+
     DPRINTF("plane_size:%d, wxh=%dx%d\n",
             stream->out.params.plane_formats[0].plane_size,
             stream->out.params.frame_width, stream->out.params.frame_height);
-    stream->out.params.plane_formats[0].stride =
-        stream->out.params.frame_width * 4;
 
     /* Initialize control values */
     stream->control.bitrate = 0;

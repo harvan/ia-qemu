@@ -806,7 +806,10 @@ int virtio_video_msdk_output_surface(MsdkSession *session, MsdkSurface *surface,
     vaapi_mid.m_frame = frame;
     width = frame->Info.Width;
     height = frame->Info.Height;
-    DPRINTF("with timestamp:%lld\n", frame->Data.TimeStamp);
+    
+    DPRINTF("output_surface with timestamp: %llu\n", 
+        frame->Data.TimeStamp);
+    
     switch (frame->Info.FourCC) {
     case MFX_FOURCC_RGB4:
         if (resource->num_planes != 1)
